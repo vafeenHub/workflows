@@ -1,1 +1,1 @@
-# Коллекция Github workflows
+# Github workflows
