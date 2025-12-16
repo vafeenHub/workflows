@@ -7,7 +7,7 @@ on:
   push:
     branches: [ main ]
     paths:
-      - '.github/LICENSE*'
+      - 'LICENSE*'
       - '.github/workflows/daily-license-check.yml'
 
 permissions:
@@ -82,9 +82,23 @@ jobs:
           # Функция обработки репозитория
           process_repo() {
             local repo_full="$1"
+            local is_fork="$2"
+            local is_archived="$3"
             
             echo ""
             echo "🔍 Processing: $repo_full"
+            
+            # Проверяем форк
+            if [ "$is_fork" = "true" ]; then
+              echo "   🍴 Форк - пропускаем"
+              return 0
+            fi
+            
+            # Проверяем архивный
+            if [ "$is_archived" = "true" ]; then
+              echo "   📦 Архивный - пропускаем"
+              return 0
+            fi
             
             # Клонируем репозиторий
             git clone --depth 1 "https://x-access-token:$GH_TOKEN@github.com/$repo_full.git" /tmp/current_repo
@@ -106,9 +120,9 @@ jobs:
             if [ -n "$CURRENT_LICENSE" ]; then
               # Сравниваем хэши
               if [ "$CURRENT_HASH" = "$ORG_LICENSE_HASH" ]; then
-                echo "   ✅ $CURRENT_LICENSE - NOT CHANGED"
+                echo "   ✅ $CURRENT_LICENSE - НЕ ИЗМЕНЯЕТСЯ"
               else
-                echo "   🔄 $CURRENT_LICENSE -> $ORG_LICENSE_FILE - UPDATING"
+                echo "   🔄 $CURRENT_LICENSE -> $ORG_LICENSE_FILE - ОБНОВЛЯЕМ"
                 
                 # Обновляем лицензию
                 cp "$ORG_LICENSE_PATH" "./$ORG_LICENSE_FILE"
@@ -123,19 +137,19 @@ jobs:
                 git commit -m "docs: update license to organization template"
                 
                 # Пуш изменений
-                echo "   📤 Pushing changes..."
+                echo "   📤 Загружаем изменения..."
                 git push origin HEAD
               fi
             else
               # Лицензии нет - добавляем
-              echo "   📝 No license - ADDING"
+              echo "   📝 Нет лицензии - ДОБАВЛЯЕМ"
               
               cp "$ORG_LICENSE_PATH" "./$ORG_LICENSE_FILE"
               git add "$ORG_LICENSE_FILE"
               git commit -m "docs: add $ORG_LICENSE_FILE from organization template"
               
               # Пуш изменений
-              echo "   📤 Pushing changes..."
+              echo "   📤 Загружаем изменения..."
               git push origin HEAD
             fi
             
@@ -149,24 +163,28 @@ jobs:
           
           while true; do
             echo ""
-            echo "📄 Processing page $PAGE..."
+            echo "📄 Обрабатываем страницу $PAGE..."
             
-            # Получаем репозитории
-            repos=$(gh api \
+            # Получаем репозитории с информацией о форках и архивах
+            repos_json=$(gh api \
               --method GET \
               -H "Accept: application/vnd.github.v3+json" \
-              "/orgs/$ORG/repos?type=public&per_page=100&page=$PAGE" \
-              --jq '.[] | .full_name')
+              "/orgs/$ORG/repos?type=public&per_page=100&page=$PAGE")
             
-            if [ -z "$repos" ]; then
-              echo "✅ All repositories processed"
+            # Проверяем, есть ли еще репозитории
+            if [ -z "$repos_json" ] || [ "$repos_json" = "[]" ]; then
+              echo "✅ Все репозитории обработаны"
               break
             fi
             
-            echo "$repos" | while read -r repo_full; do
-              process_repo "$repo_full"
+            # Обрабатываем каждый репозиторий
+            echo "$repos_json" | jq -r '.[] | "\(.full_name) \(.fork) \(.archived)"' | while read -r repo_info; do
+              repo_full=$(echo "$repo_info" | awk '{print $1}')
+              is_fork=$(echo "$repo_info" | awk '{print $2}')
+              is_archived=$(echo "$repo_info" | awk '{print $3}')
+              
+              process_repo "$repo_full" "$is_fork" "$is_archived"
             done
             
             PAGE=$((PAGE + 1))
           done
-          
